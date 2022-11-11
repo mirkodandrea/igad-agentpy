@@ -12,7 +12,8 @@ import rasterio as rio
 ALPHA_INCOME = 0.5
 # parametro di povertà
 POVERTY_LINE = 2
-
+#%% 1KM 
+MAX_DISTANCE = 0.005
 #%%
 def get_events(initial_row=0, stride=20):
     events = []
@@ -35,10 +36,10 @@ def get_events(initial_row=0, stride=20):
 
 class HouseHold(ap.Agent):
     @staticmethod
-    def create(model, *, positions, prices, incomes, vulnerabilities, family_members, awarenesses):
+    def create(model, *, positions, prices, incomes, vulnerabilities, family_members, perceptions):
         households = []
-        for position, price, income, vulnerability, members, awareness in zip(positions, prices, incomes, vulnerabilities, family_members, awarenesses):
-            households.append(HouseHold(model, position=position, price=price, income=income, vulnerability=vulnerability, family_members=members, awareness=awareness))
+        for position, price, income, vulnerability, members, perception in zip(positions, prices, incomes, vulnerabilities, family_members, perceptions):
+            households.append(HouseHold(model, position=position, price=price, income=income, vulnerability=vulnerability, family_members=members, perception=perception))
 
         return households
 
@@ -49,7 +50,7 @@ class HouseHold(ap.Agent):
         self.price = kwargs['price']
         self.vulnerability = kwargs['vulnerability']
         self.family_members = kwargs['family_members']
-        self.awareness = kwargs['awareness']
+        self.perception = kwargs['perception']
         self.damage = 0
         self.displaced = False
 
@@ -58,7 +59,7 @@ class HouseHold(ap.Agent):
         self.fix_damage()
         flood_value = self.do_flood()
         self.displace()
-        self.update_awareness(flood_value)
+        self.update_perception(flood_value)
         
 
     def displace(self):
@@ -75,7 +76,7 @@ class HouseHold(ap.Agent):
         if self.damage >= 0.65:
             self.displaced = True
         elif self.damage >= 0.1:
-            self.displaced = np.random.random() < self.awareness
+            self.displaced = np.random.random() < self.perception
         else:
             self.displaced = False
 
@@ -112,21 +113,36 @@ class HouseHold(ap.Agent):
 
         return flood_value
 
-    def update_awareness(self, flood_value):
-        """
-        update awareness for current household
-        """
-        if self.displaced: return
+    def __get_max_perception(self):
+        # [TODO] max_perception should be a function of agent characteristics
+        return 1
 
-        if self.damage >= 0.1:
-            self.awareness = np.clip(self.awareness + 0.1, 0, 1)
-        else:
-            self.awareness = np.clip(self.awareness - 0.1, 0, 1)
+    def update_perception(self, flood_value):
+        """
+        update risk perception for current household
+        """
+        if flood_value > 0.01:
+            self.perception = self.__get_max_perception()
+            return
         
+        
+        neighbors = self.model.domain.neighbors(self, distance=MAX_DISTANCE)
+        if len(neighbors) == 0:
+            #self.perception = np.clip(self.perception - 0.1, 0, 1)
+            return
+        
+        high_perception_neighbours = \
+            list(filter(
+                lambda n: n.perception > self.perception, 
+            neighbors))
+        
+        if len(high_perception_neighbours) > len(neighbors)/4:
+            self.perception = np.clip(self.perception + 0.1, 0, 1)
+
     #------------------------------------------------------------------------
         # Define custom actions here
         #print('agent', self.id, 'is doing something')
-        # neighbors = self.model.domain.neighbors(self, distance=30)
+        # 
 
         
         # mean_income = np.mean([n.income for n in neighbors])
@@ -168,7 +184,7 @@ class Model(ap.Model):
             incomes=self.p['incomes'], 
             vulnerabilities=self.p['vulnerabilities'], 
             family_members=self.p['family_members'],
-            awarenesses=self.p['awarenesses']
+            perceptions=self.p['perceptions']
         )
         self.households = ap.AgentList(self, households, HouseHold)
         self.domain = ap.Space(self, [180]*2, torus=True)
@@ -229,14 +245,14 @@ lats = settlements.geometry.centroid.y
 positions = list(zip(lons, lats))
 incomes = np.random.pareto(ALPHA_INCOME, n_households)
 vulnerabilities = np.random.random(n_households)
-awarenesses = np.random.random(n_households)
+perceptions = np.random.random(n_households)
 family_members = np.random.poisson(4, n_households)+1
 params = dict(
     positions=positions,
     prices=prices,
     incomes=incomes,
     vulnerabilities=vulnerabilities,
-    awarenesses=awarenesses,
+    perceptions=perceptions,
     family_members=family_members,
     events=events
 )
