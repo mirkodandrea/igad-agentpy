@@ -13,7 +13,7 @@ ALPHA_INCOME = 0.5
 # parametro di povertà
 POVERTY_LINE = 2
 #%% 1KM 
-MAX_DISTANCE = 0.005
+MAX_DISTANCE = 0.002
 #%%
 def get_events(initial_row=0, stride=20):
     events = []
@@ -55,12 +55,58 @@ class HouseHold(ap.Agent):
         self.displaced = False
 
 
-    def step(self):
+    def step(self, previous_perception):
         self.fix_damage()
-        flood_value = self.do_flood()
-        self.displace()
-        self.update_perception(flood_value)
         
+        flood_value = self.do_flood()
+        
+        self.update_perception(flood_value, previous_perception)
+
+        self.displace()
+
+
+
+    def fix_damage(self):
+        """
+        fix damage for current household
+        use interarrival_time to calculate how much damage can be fixed
+        """
+        t = self.model.t -1
+        if t==0: return
+        
+        interarrival_time = self.p.events[t]['interarrival_time']
+
+        # it takes 1 year to fix 100% of damage if income is >=10
+        # else every unit of income less than 10 increases the time to fix the damage by 1.2 month
+        recovery_time = 365  \
+                        if self.income > 10 \
+                        else 365 + (10 - self.income) * 36.5
+
+        recovery = interarrival_time/recovery_time
+        
+        self.damage = np.clip(self.damage - recovery, 0, 1)
+
+
+    def do_flood(self):
+        """check flood for current household
+        increment damage if household is flooded
+        - damage is in percentage
+        - damage occurs if flood value is > 10mm
+        - damage is proportional to flood value: 1m -> 100% damage
+        """
+        t = self.model.t - 1
+        event = self.p.events[t]
+        r = event['rio_object']
+        flood_data = event['data']
+        row, col = r.index(*self.position)
+        flood_value = flood_data[row, col]
+
+        # flood value is in millimeters
+        if flood_value > 10:
+            self.damage = np.clip(self.damage + (flood_value / 1000), 0, 1)
+
+        return flood_value
+
 
     def displace(self):
         """
@@ -80,64 +126,35 @@ class HouseHold(ap.Agent):
         else:
             self.displaced = False
 
-    def fix_damage(self):
-        """
-        fix damage for current household
-        use interarrival_time to calculate how much damage can be fixed
-        """
-        t = self.model.t -1
-        if t==0: return
-        
-        interarrival_time = self.p.events[t]['interarrival_time']
-        recovery_time = 365  \
-                        if self.income > 10 \
-                        else 365 + (10 - self.income) * 36.5
-
-        recovery = interarrival_time/recovery_time
-        
-        self.damage = np.clip(self.damage - recovery, 0, 1)
-
-
-    def do_flood(self):
-        """check flood for current household
-        increment damage if household is flooded
-        """
-        t = self.model.t - 1
-        event = self.p.events[t]
-        r = event['rio_object']
-        flood_data = event['data']
-        row, col = r.index(*self.position)
-        flood_value = flood_data[row, col]
-
-        self.damage = np.clip(self.damage + ((flood_value - 10)/1000), 0, 1)
-
-        return flood_value
-
     def __get_max_perception(self):
         # [TODO] max_perception should be a function of agent characteristics
         return 1
 
-    def update_perception(self, flood_value):
+    def update_perception(self, flood_value, previous_perception):
         """
         update risk perception for current household
         """
-        if flood_value > 0.01:
+
+        if flood_value > 10 or self.displaced:
             self.perception = self.__get_max_perception()
             return
         
         
         neighbors = self.model.domain.neighbors(self, distance=MAX_DISTANCE)
         if len(neighbors) == 0:
-            #self.perception = np.clip(self.perception - 0.1, 0, 1)
             return
         
-        high_perception_neighbours = \
-            list(filter(
-                lambda n: n.perception > self.perception, 
-            neighbors))
-        
-        if len(high_perception_neighbours) > len(neighbors)/4:
-            self.perception = np.clip(self.perception + 0.1, 0, 1)
+#        high_perception_neighbours = \
+#            list(filter(
+#                lambda n: previous_perception[n.id-1] > self.perception,
+#            neighbors))      
+#        if len(high_perception_neighbours) >= len(neighbors)/2:
+#            self.perception = np.clip(self.perception + 0.1, 0, 1)
+#        else:
+#            self.perception = np.clip(self.perception - 0.1, 0, 1)
+
+        neighbour_perception = [previous_perception[n.id-1] for n in neighbors]
+        self.perception = np.mean(neighbour_perception)
 
     #------------------------------------------------------------------------
         # Define custom actions here
@@ -193,11 +210,13 @@ class Model(ap.Model):
 
     def step(self):
         """ Call a method for every agent. """
-        self.households.step()
+        previous_perception = [h.perception for h in self.households]
+        self.households.step(previous_perception)
 
     def update(self):
         """ Record a dynamic variable. """
         self.households.record('damage')
+        self.households.record('perception')
         self.households.record('displaced')
         
         if (self.t + 1) >= len(self.p.events):
@@ -205,7 +224,8 @@ class Model(ap.Model):
 
     def end(self):
         """ Repord an evaluation measure. """
-        self.report('income', 1)
+        #self.report('income', 1)
+        pass
 
 #%%
 def animation_plot_single(m, ax):
@@ -216,9 +236,10 @@ def animation_plot_single(m, ax):
     pos = np.array(list(pos)).T  
     
     damages = np.array(m.households.damage)
+    perceptions = np.array(m.households.perception)    
 
-    ax.scatter(*pos[:, ~displaced_idx], c=damages[~displaced_idx], cmap='viridis', marker='s', s=20)
-    ax.scatter(*pos[:, displaced_idx], c=damages[displaced_idx], cmap='viridis', marker='x', s=20)
+    ax.scatter(*pos[:, ~displaced_idx], c=damages[~displaced_idx], cmap='viridis', marker='s', s=3 + 25*perceptions[~displaced_idx])
+    ax.scatter(*pos[:, displaced_idx], c=damages[displaced_idx], cmap='viridis', marker='x', s=3 + 25*perceptions[displaced_idx])
 
     cx.add_basemap(ax, crs='epsg:4326',
                    source=cx.providers.OpenStreetMap.Mapnik)
@@ -260,8 +281,8 @@ params = dict(
 model = Model(params)
 animation_plot(model)
 #%%
-damage_df = model.output['variables']['HouseHold']
-#%%
-damage_df.unstack().sum(axis=0).plot()
+# damage_df = model.output['variables']['HouseHold']
+# #%%
+# damage_df.unstack().sum(axis=0).plot()
 
 # %%
