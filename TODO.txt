@@ -1,6 +1,14 @@
 [TODO]
 
-- add check flood_forecasted: random for event
 - flood_forecasted:
+    early warning is emitted and agents react
+    - update perception:
+        if perception > threshold and rich_enough
+            move
+        else
+            check_neighbours_moving and set perception, move if necessary
+            
+    - event occurs: 
+
     
 

@@ -1,7 +1,7 @@
-data/*
-data_2/*
-!data/
-!data_2/
+IGAD/*
+preprocessing/data/*
+preprocessing/data_2/*
+!IGAD/
 
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,macos,windows,linux,visualstudiocode
