@@ -126,7 +126,7 @@ class HouseHold(ap.Agent):
         self.displaced = True
         self.reason = reason
 
-    def receive_early_warning(self, neighbours_perception):
+    def receive_early_warning(self, previous_perception):
         """
         receive early warning and decide if household is displaced
         """
@@ -140,9 +140,17 @@ class HouseHold(ap.Agent):
 
         # check neighbours perception and if at least 50% of neighbours has a perception > 0.5
         # then household is displaced
-        if self.perception > 0.5 or \
-            np.mean(neighbours_perception) > 0.5:
+        if self.perception > 0.5:
             self.__set_displaced('early warning')
-        
+
+        neighbors = self.model.domain.neighbors(self, distance=MAX_DISTANCE)
+        if len(neighbors) == 0:
+            return
+
+        neighbours_perception = [previous_perception[n.id-1] for n in neighbors]
+        # if at least 50% of neighbours has a perception > 0.5
+        # then household is displaced
+        if np.mean(neighbours_perception) > 0.5:
+            self.__set_displaced('early warning')
 
             
