@@ -44,9 +44,10 @@ class Model(ap.Model):
     def step(self):
         """ Call a method for every agent. """
         previous_awareness = [h.awareness for h in self.households]
+        previous_perception = [h.perception for h in self.households]
 
         if self.emit_early_warning():
-            self.households.receive_early_warning()
+            self.households.receive_early_warning(previous_perception)
 
         self.households.update_awareness(previous_awareness)
         self.households.update_fear()
