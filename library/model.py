@@ -1,5 +1,5 @@
 from .constants import (
-    EMIT_EARLY_WARNING_PROBABILITY, MAX_YEARS
+    MAX_YEARS, 
 )
 
 import agentpy as ap
@@ -22,27 +22,34 @@ class Model(ap.Model):
                 vulnerability=p['vulnerabilities'][i],
                 family_members=p['family_members'][i],
                 awareness=p['awarenesses'][i],
-                fear=p['fears'][i]
+                fear=p['fears'][i],
+                trust=p['trusts'][i]
             ),
             range(len(n_households))
         )
+        self.false_alarm_rate = self.p['false_alarm_rate']
+        self.false_negative_rate = self.p['false_negative_rate']
+
         self.households = ap.AgentList(self, households, HouseHold)
         self.domain = ap.Space(self, [180]*2, torus=True)
         self.domain.add_agents(self.households, positions=self.p['positions'])
 
     def emit_early_warning(self):
         """ 
-        emit early warning if there is a flood event in 
-        current year using EMIT_EARLY_WARNING_PROBABILITY
+        emit early warning.
+        If there is a flood event in time t, emit early warning with probability 1 - false_negative_rate
+        If there is no flood event in time t, emit early warning with probability false_alarm_rate        
         """
         t = self.t
         if t not in self.p.events:
-            return False
+            return random() < self.false_alarm_rate
 
-        return random() < EMIT_EARLY_WARNING_PROBABILITY
+        return random() < self.false_negative_rate
 
     def step(self):
         """ Call a method for every agent. """
+        self.households.update_trust()
+
         previous_awareness = [h.awareness for h in self.households]
         previous_perception = [h.perception for h in self.households]
 
@@ -50,16 +57,19 @@ class Model(ap.Model):
             self.households.receive_early_warning(previous_perception)
 
         self.households.update_awareness(previous_awareness)
-        self.households.update_fear()
 
         if self.t in self.p.events:
+            events = self.p.events[self.t]
+
             # there is one or more event this year
-            flood_values = self.households.do_flood()
+            flood_values = self.households.do_flood(events)
             self.households.set_fear(flood_values)
             self.households.displace()
         else:
             # no event this year
             self.households.fix_damage()
+            self.households.update_fear()
+
 
     def update(self):
         """ Record a dynamic variable. """
@@ -68,6 +78,7 @@ class Model(ap.Model):
         self.households.record('awareness')
         self.households.record('fear')
         self.households.record('displaced')
+        self.households.record('trust')
 
         if (self.t + 1) >= MAX_YEARS:
             self.stop()
