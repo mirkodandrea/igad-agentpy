@@ -21,6 +21,7 @@ class Model(ap.Model):
                 income=p['incomes'][i],
                 vulnerability=p['vulnerabilities'][i],
                 family_members=p['family_members'][i],
+                flood_prone=p['flood_prones'][i],
                 awareness=p['awarenesses'][i],
                 fear=p['fears'][i],
                 trust=p['trusts'][i]
@@ -34,42 +35,56 @@ class Model(ap.Model):
         self.domain = ap.Space(self, [180]*2, torus=True)
         self.domain.add_agents(self.households, positions=self.p['positions'])
 
-    def emit_early_warning(self):
+    def maybe_emit_early_warning(self):
         """ 
         emit early warning.
         If there is a flood event in time t, emit early warning with probability 1 - false_negative_rate
         If there is no flood event in time t, emit early warning with probability false_alarm_rate        
         """
         t = self.t
+        emit = False
         if t not in self.p.events:
-            return random() < self.false_alarm_rate
+            emit = random() < self.false_alarm_rate
+        else:
+            emit = random() < self.false_negative_rate
 
-        return random() < self.false_negative_rate
+        if emit:
+            self.households.receive_early_warning()
 
     def step(self):
         """ Call a method for every agent. """
-        self.households.update_trust()
-
-        previous_awareness = [h.awareness for h in self.households]
-        previous_perception = [h.perception for h in self.households]
-
-        if self.emit_early_warning():
-            self.households.receive_early_warning(previous_perception)
-
-        self.households.update_awareness(previous_awareness)
+        
+        self.maybe_emit_early_warning()
 
         if self.t in self.p.events:
             events = self.p.events[self.t]
-
-            # there is one or more event this year
-            flood_values = self.households.do_flood(events)
-            self.households.set_fear(flood_values)
-            self.households.displace()
+            self.do_flood(events)
         else:
             # no event this year
-            self.households.fix_damage()
-            self.households.update_fear()
+            self.nothing_happened()
 
+    def do_flood(self, events):
+        """ 
+        do flood
+        """
+        for household in self.households:
+            flood_value = 0
+            for event in events:
+                r = event['rio_object']
+                flood_data = event['data']
+                row, col = r.index(*household.position)
+                flood_value = np.nanmax(
+                    [flood_data[row, col],
+                    flood_value]
+                )
+            household.receive_flood(flood_value)
+
+    def notify_nothing_happened(self):
+        """ 
+        notify nothing happened
+        """
+        self.households.nothing_happened()
+        
 
     def update(self):
         """ Record a dynamic variable. """
