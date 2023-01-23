@@ -17,10 +17,10 @@ class Model(ap.Model):
             lambda i: HouseHold(
                 self,
                 position=p['positions'][i],
-                price=p['prices'][i],
+#                price=p['prices'][i],
                 income=p['incomes'][i],
-                vulnerability=p['vulnerabilities'][i],
-                family_members=p['family_members'][i],
+#                vulnerability=p['vulnerabilities'][i],
+#                family_members=p['family_members'][i],
                 flood_prone=p['flood_prones'][i],
                 awareness=p['awarenesses'][i],
                 fear=p['fears'][i],
@@ -35,6 +35,9 @@ class Model(ap.Model):
         self.domain = ap.Space(self, [180]*2, torus=True)
         self.domain.add_agents(self.households, positions=self.p['positions'])
 
+    def has_floods(self):
+        return self.t in self.p.events
+    
     def maybe_emit_early_warning(self):
         """ 
         emit early warning.
@@ -43,25 +46,28 @@ class Model(ap.Model):
         """
         t = self.t
         emit = False
-        if t not in self.p.events:
-            emit = random() < self.false_alarm_rate
-        else:
+        if self.has_floods():    
             emit = random() < self.false_negative_rate
+        else:
+            emit = random() < self.false_alarm_rate
 
         if emit:
             self.households.receive_early_warning()
+            self.households.check_neighbours()
+
+    def init_step(self):
+        self.households.init_step()
 
     def step(self):
         """ Call a method for every agent. """
-        
+        self.init_step()
         self.maybe_emit_early_warning()
 
-        if self.t in self.p.events:
+        if self.has_floods():
             events = self.p.events[self.t]
             self.do_flood(events)
-        else:
-            # no event this year
-            self.nothing_happened()
+        
+        self.end_step()
 
     def do_flood(self, events):
         """ 
@@ -77,13 +83,14 @@ class Model(ap.Model):
                     [flood_data[row, col],
                     flood_value]
                 )
+            
             household.receive_flood(flood_value)
 
-    def notify_nothing_happened(self):
+    def end_step(self):
         """ 
         notify nothing happened
         """
-        self.households.nothing_happened()
+        self.households.end_step()
         
 
     def update(self):

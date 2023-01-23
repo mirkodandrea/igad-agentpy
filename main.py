@@ -23,7 +23,8 @@ from library.constants import (
 def animation_plot_single(m, ax):
     print(f"{m.t}")
     ax.set_title(f"t={m.t}")
-    displaced_idx = np.array(m.households.displaced)
+    displaced_idx = np.array([s != 'normal' for s in m.households.status])
+    perceptions = np.array(m.households.perception)
     poors_idx = np.array(m.households.income) < POVERTY_LINE
 
     pos = m.domain.positions.values()
@@ -32,16 +33,21 @@ def animation_plot_single(m, ax):
     damages = np.array(m.households.damage)
 
     ax.scatter(*pos[:, ~displaced_idx], c=damages[~displaced_idx],
-               cmap='viridis', marker='s', s=3 + 25*awarenesses[~displaced_idx])
-    ax.scatter(*pos[:, displaced_idx], c=damages[displaced_idx], cmap='viridis', marker='x', s=3 + 25*awarenesses[displaced_idx])
+               cmap='viridis', 
+               marker='s', 
+               s=3 + 25*perceptions[~displaced_idx])
+    
+    ax.scatter(*pos[:, displaced_idx], c=damages[displaced_idx], 
+                cmap='viridis', 
+                marker='x', 
+                s=3 + 25*perceptions[displaced_idx])
 
     ax.scatter(*pos[:, poors_idx], facecolors='none',
                edgecolors='g', marker='o', s=30)
 
     cx.add_basemap(ax, crs='epsg:4326',
                    source=cx.providers.OpenStreetMap.Mapnik)
-    #ax.set_xlim(0, m.p.size)
-    #ax.set_ylim(0, m.p.size)
+    
     ax.set_axis_off()
         
 def animation_plot(model):    
@@ -57,21 +63,20 @@ def animation_plot(model):
 settlements = gpd.read_file('IGAD/settlements_with_price.gpkg').to_crs(epsg=4326)
 events = get_events(initial_year=0, stride=MAX_YEARS)
 n_households = len(settlements)
-prices = settlements['price'].values
 lons = settlements.geometry.centroid.x
 lats = settlements.geometry.centroid.y
 positions = list(zip(lons, lats))
 incomes = pareto(ALPHA_INCOME, n_households)
-vulnerabilities = random(n_households)
 awarenesses = random(n_households)
 fears = random(n_households)
-family_members = poisson(4, n_households)+1
+
+#prices = settlements['price'].values
+#vulnerabilities = random(n_households)
+#family_members = poisson(4, n_households)+1
+
 params = dict(
     positions=positions,
-    prices=prices,
     incomes=incomes,
-    vulnerabilities=vulnerabilities,
-    family_members=family_members,
     events=events,
     awarenesses=awarenesses,
     fears=fears

@@ -6,6 +6,10 @@ from .constants import (
     EVENT_FLOOD, EVENT_EARLY_WARNING
 )
 
+STATUS_NORMAL = 'normal'
+STATUS_EVACUATED = 'evacuated'
+STATUS_DISPLACED = 'displaced'
+
 import agentpy as ap
 import numpy as np
 from numpy.random import normal, random
@@ -14,9 +18,9 @@ class HouseHold(ap.Agent):
     def setup(self, 
         position, 
         income, 
-        price, 
-        vulnerability, 
-        family_members, 
+#        price, 
+#        vulnerability, 
+#        family_members, 
         flood_prone,
         awareness, 
         fear,
@@ -24,25 +28,81 @@ class HouseHold(ap.Agent):
         ):
         self.position = position
         self.income = income
-        self.price = price
-        self.vulnerability = vulnerability
-        self.family_members = family_members
+        # self.price = price
+        # self.vulnerability = vulnerability
+        # self.family_members = family_members
         self.awareness = awareness
         self.flood_prone = flood_prone
         self.fear = fear
         self.trust = trust
         self.damage = 0
         self.displaced = False
-        self.reason = ''
         
-        self.last_life_events = []
+        self.status = STATUS_NORMAL
+        
+        # prepared to flood
+        self.alerted = False
+        self.received_flood = False
+        self.prepared = False
 
+    def init_step(self):
+        """init household status for each step"""
+        # set all flags back to False
+        self.alerted = False
+        self.received_flood = False
 
-    def receive_early_warning(self):
+        # check household damage and decide to return to normal
         pass
 
+        if self.status == STATUS_EVACUATED:
+            self.prepared = False
+
+    def receive_early_warning(self):
+        """receive early warning from government
+        - if household is already evacuated, do nothing
+        - if household doesn't trust the government, then do nothing
+        - if household is not aware of risk, prepare
+        - if household is aware of risk, evacuate without preparing
+        """
+        self.alerted = True
+
+        if self.status != STATUS_NORMAL:
+            # already evacuated
+            return
+        
+        if self.income < POVERTY_LINE:
+            # poor household
+            return
+        
+        if self.trust >= 0.5:
+            # trust the government
+            if self.perception >= 0.5:
+                # aware of risk
+                self.status = STATUS_EVACUATED
+                return
+
+            self.prepared = True
+        
+            
+
+    def check_neighbours(self):
+        """check neighbours for early warning reaction
+        - if enough neighbours are evacuated, then evacuate
+        - if enough neighbours are prepared, then prepare
+        """
+        neighbours = self.model.domain.neighbors(self, MAX_DISTANCE)
+        
+        other_prepared = [neighbour.prepared for neighbour in neighbours]
+        if sum(other_prepared) > 0.5 * len(neighbours):
+            self.prepared = True
+
+        other_status = [neighbour.status == STATUS_EVACUATED for neighbour in neighbours]
+        if sum(other_status) > 0.5 * len(neighbours):
+            self.status = STATUS_EVACUATED
+
+            
     def receive_flood(self, flood_value):
-        """check flood for current household
+        """receive flood for current household
         increment damage if household is flooded
         - damage is in percentage
         - damage occurs if flood value is > 10mm
@@ -52,53 +112,65 @@ class HouseHold(ap.Agent):
         if flood_value == 0:
             """ nothing happened to this household """
             # [TODO] update trust if alerted
-            
-            self.fix_damage()
-          
+            self.received_flood = False
+            return
 
-        elif flood_value > 0 and flood_value < FLOOD_DAMAGE_THRESHOLD:
-            """ household is flooded but not damaged """
-            # [TODO] update trust if alerted
-            pass
-          
+        self.received_flood = True
 
-        # flood value is in millimeters
-        elif flood_value > FLOOD_DAMAGE_THRESHOLD:
-            self.get_damage(flood_value)
-
-    def nothing_happened(self):
-        pass
-
-
-    def get_damage(self, flood_value):
+        if self.prepared and flood_value < FLOOD_DAMAGE_THRESHOLD:
+            return
+        
         new_damage = (flood_value / FLOOD_DAMAGE_MAX)
-        self.damage = np.clip(
-                self.damage + new_damage, 0, 1)
-        
-        FLOOD_DAMAGE_AWARENESS_THRESHOLD = 0.1
-        
+        if self.prepared:
+            new_damage = new_damage * 0.5
+
+        self.damage = np.clip(self.damage + new_damage, 0, 1)        
+        FLOOD_DAMAGE_AWARENESS_THRESHOLD = 0.1        
         if new_damage > FLOOD_DAMAGE_AWARENESS_THRESHOLD:
             self.awareness = 1.0
 
-    def update_trust(self):
-        if EVENT_FLOOD in self.last_life_events and EVENT_EARLY_WARNING in self.last_life_events:
+        if self.damage >= DISPLACE_DAMAGE_THRESHOLD:
+            self.status = STATUS_DISPLACED
+
+    def end_step(self):
+        if not self.receive_flood and not self.alerted:
+            self.fix_damage()
+
+        self.update_sentiments()
+
+    def update_sentiments(self):
+        """
+        update trust for current household
+        - if household is alerted and at least a neighbour received flood, trust -> 1
+        - if household is alerted and no neighbour received flood, trust -> trust/2
+        - if household is not alerted and at least a neighbour received flood, fear -> fear + 0.1
+        - if household is not alerted and noone received flood, do nothing
+        """
+        neighbours_flooded = [neighbour.received_flood for neighbour in self.model.domain.neighbors(
+            self, MAX_DISTANCE)]
+        anyone_flooded = \
+            self.received_flood or \
+            any(neighbours_flooded)
+        
+        if self.received_flood:
+            self.awareness = 1.0
+
+        elif len(neighbours_flooded) > 0 \
+            and sum(neighbours_flooded) > 0.25 * len(neighbours_flooded):
+            self.awareness = 1.0
+
+        if self.alerted and anyone_flooded:
             self.trust = 1.0
-            pass
-
-        elif EVENT_FLOOD not in self.last_life_events and EVENT_EARLY_WARNING in self.last_life_events:
+        
+        elif self.alerted and not anyone_flooded:
             self.trust = np.clip(self.trust/2, 0, 1)
-            pass
 
-        elif EVENT_FLOOD in self.last_life_events and EVENT_EARLY_WARNING not in self.last_life_events:
-            # do nothing
+        elif not self.alerted and anyone_flooded:
+            self.fear = np.clip(self.fear + 0.1, 0, 1)
             pass
         
-        elif EVENT_FLOOD not in self.last_life_events and EVENT_EARLY_WARNING not in self.last_life_events:
-            self.trust = np.clip(self.trust * 1.1, 0, 1)
+        elif not self.alerted and not anyone_flooded:
             pass
-
-        self.last_life_events = []
-
 
     def fix_damage(self):
         """
@@ -125,95 +197,13 @@ class HouseHold(ap.Agent):
 
         self.damage = np.clip(self.damage - recovery, 0, 1)
 
-        if self.damage < 0.25 and self.displaced:
-            self.displaced = False
-
-    def update_awareness(self, previous_awareness):
-        """
-        update risk awareness for current household
-        """
-        neighbors = self.model.domain.neighbors(self, distance=MAX_DISTANCE)
-        if len(neighbors) == 0:
-            return
-
-        neighbour_awareness = [previous_awareness[n.id-1] for n in neighbors]
-        HIGH_AWARENESS_THRESHOLD = 0.5
-        
-        over_threshold = np.sum(
-            [aw > HIGH_AWARENESS_THRESHOLD for aw in neighbour_awareness]
-        )
-        
+        if self.damage < 0.25 and self.status != STATUS_NORMAL:
+            self.status = STATUS_NORMAL
 
     
     @property
     def perception(self):
         return self.awareness * self.fear
 
-    def displace(self):
-        """
-        decide if household is displaced
-        """
-        if self.displaced:
-            return
-
-        # if household income is below poverty line, it cannot be displaced
-        if self.damage >= DISPLACE_DAMAGE_THRESHOLD:
-            self.__set_displaced()
-            self.awareness = 1.0
-        elif self.damage >= 0.1:
-            self.displaced = normal(self.damage, 0.2) < self.perception
-            self.awareness = 1.0
-        else:
-            self.displaced = False
-
-    def update_fear(self):
-        t = self.model.t - 1
-        if t == 0:
-            return
-
-        fear_recovery = 0.2
-        self.fear = np.clip(self.fear - fear_recovery, 0, 1)
     
-    def set_fear(self, flood_values):
-        """
-        update fear for current household
-        """
-        flood_value = flood_values[self.id-1]
-        if flood_value > 0:
-            self.fear = flood_values[self.id-1] / FLOOD_FEAR_MAX
-
-    def __set_displaced(self):
-        self.displaced = True
-
-    def receive_early_warning(self, previous_perception):
-        """
-        receive early warning and decide if household is displaced
-        """
-        if self.flood_prone:
-            self.last_life_events.append(EVENT_EARLY_WARNING)
-
-            if self.displaced:
-                return
-
-            if self.income <= POVERTY_LINE:
-                # if household income is below poverty line, 
-                # it cannot displaced by early warning
-                return
-
-
-            # check trust in authorities
-            if random() < self.trust:
-                self.__set_displaced()
-
-
-        # neighbors = self.model.domain.neighbors(self, distance=MAX_DISTANCE)
-        # if len(neighbors) == 0:
-        #     return
-
-        # neighbours_perception = [previous_perception[n.id-1] for n in neighbors]
-        # # if at least 50% of neighbours has a perception > 0.5
-        # # then household is displaced
-        # if np.mean(neighbours_perception) > 0.5:
-        #     self.__set_displaced(REASON_EARLY_WARNING)
-
-            
+    
